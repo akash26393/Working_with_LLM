@@ -63,7 +63,9 @@ button = st.button("ASK")
 if button:
     if question:
         # Initialize LLM
-        llm = OllamaLLM(model='qwen3.5:397b-cloud')
+        # llm = OllamaLLM(model='qwen3.5:397b-cloud')
+        # llm = OllamaLLM(model='gemma4:31b-cloud')
+        llm = OllamaLLM(model='nemotron-3-super:cloud')
 
         # Load the entire diary (creates file if not exists)
         data = load_diary()
@@ -76,7 +78,7 @@ if button:
             documents = []
             for date, diary_text in data.items():
                 documents.append(Document(
-                    page_content=diary_text,
+                    page_content=f"Date: {date}\n{diary_text}",
                     metadata={"date": date}
                 ))
 
@@ -84,9 +86,19 @@ if button:
             embeddings = OllamaEmbeddings(model='nomic-embed-text')
             db = FAISS.from_documents(documents, embedding=embeddings)
 
-            # Retrieve top 3 most relevant diary entries
-            retriever = db.as_retriever()
+            # Retrieve most relevant diary entries
+            retriever = db.as_retriever(
+                search_type="mmr",
+                search_kwargs={"k": 10, "fetch_k": 20}
+            )
             retrieved_docs = retriever.invoke(question)
+
+            # Fallback: If retrieved_docs < 5, use full diary instead
+            if len(retrieved_docs) < 5:
+                st.info(f"⚠️ Only {len(retrieved_docs)} relevant entries found. Using full diary for comprehensive context.")
+                retrieved_docs = documents  # Use all diary entries
+            else:
+                st.success(f"✅ Retrieved {len(retrieved_docs)} relevant diary entries")
 
             # Combine retrieved diary entries as context
             text = ""
@@ -96,11 +108,23 @@ if button:
                 text += f"Date: {date}\nDiary: {doc.page_content}\n\n"
 
             # Define RAG Prompt
-            template = """You are a helpful assistant. Please answer the following question based on the below diary:
+            template = """You are an intelligent assistant.
+
+Carefully read ALL diary entries provided below.
+
+Do NOT ignore any entry.
+
+The user may ask questions that require:
+- inference
+- indirect reasoning
+- combining multiple entries
+
+Even if something is not explicitly stated, infer from context.
 
 Question: {question}
 
-Diary: {text}
+Diary Entries:
+{text}
 """
             prompt_template = PromptTemplate(template=template, input_variables=["text", "question"])
 
